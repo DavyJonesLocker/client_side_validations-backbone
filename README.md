@@ -1,3 +1,7 @@
+# STOP #
+
+This repo is very much under active development and should not be used yet!
+
 # ClientSideValidations-Backbone #
 
 [![Build Status](http://travis-ci.org/dockyard/client_side_validations-backbone.png)](http://travis-ci.org/dockyard/client_side_validations-backbone)
