@@ -5,4 +5,6 @@ require 'rails'
 require 'test/unit'
 require 'mocha'
 
-module ClientSideValidations; end
+module ClientSideValidations
+  module Backbone; end
+end
