@@ -111,6 +111,7 @@ $(-> $('form[data-validate]').validate())
 
 window.ClientSideValidations =
   forms: {}
+  models: {}
   validators:
     all: -> jQuery.extend({}, ClientSideValidations.validators.local, ClientSideValidations.validators.remote)
     local:
@@ -291,6 +292,134 @@ window.ClientSideValidations =
           inputErrorField.replaceWith(element)
           label.detach()
           labelErrorField.replaceWith(label)
+  
+  # Decorates a Backbone Model or child class.  Runs any pre-existing validations first, and if
+  # they pass, then it runs the ClientSideValidations.
+  decorateModel: (TargetModel, modelName) ->
+    TargetModel.prototype._csvModelName = modelName
+    originalValidate = TargetModel.prototype.validate
+    TargetModel.prototype.validate = (attrs) ->
+
+      # TBD: call CSV form validator events?
+      # form.trigger('form:validate:before')
+      if originalValidate
+        errors = originalValidate.call(@, attrs)
+        return errors if errors
+
+      settings = ClientSideValidations.models[modelName]
+      validators = settings.validators
+      errors = {}
+      valid = true
+
+      # TBD: call CSV form validator events?
+      # element.trigger('element:validate:before')
+      for attr, value of attrs
+        ## validateElement is passed the validators for each attr (validators[attr])
+        attribute_validators = validators[attr]
+        for context in [ClientSideValidations.validators.local, ClientSideValidations.validators.remote]
+          unless errors.length
+            for kind, fn of context
+              if attribute_validators?[kind]
+                # Impersonate an element
+                element =
+                  attr: (a) -> { name: attr }[a]
+                  val: -> value
+                message = fn.call(context, element, attribute_validators[kind])
+                if message
+                  # TBD: call CSV form validator events?
+                  # element.trigger('element:validate:fail', message).data('valid', false)
+                  valid = false
+                  errors[attr] = message
+                # else
+                  # TBD: call CSV form validator events?
+                  # element.trigger('element:validate:pass')
+                # TBD: call CSV form validator events?
+                # element.trigger('element:validate:after')
+
+      # TBD: call CSV form validator events?
+      # if errors.length == 0 then form.trigger('form:validate:pass') else form.trigger('form:validate:fail')
+      # form.trigger('form:validate:after')
+      return errors unless valid
+    
+  # Decorates a Backbone View or child class
+  decorateView: (TargetView) ->
+    # Set up our events while preserving other events
+    events = {
+      'submit'                            : '_csvUpdateAllInputsAndSubmit'
+      'focusout input:enabled:not(:radio)': '_csvUpdateInput'
+      'change input:enabled:not(:radio)'  : '_csvUpdateInput'
+      'click :checkbox'                   : '_csvUpdateCheckbox'
+      # Confirmation missing
+    }
+    events[key] = value for key, value of TargetView.prototype.events
+    TargetView.prototype.events = events
+    
+    originalInitialize = TargetView.prototype.initialize
+    TargetView.prototype.initialize = ->
+      originalInitialize.apply(@, arguments) if originalInitialize
+      
+      # Tracks the elements that should show an error - if you haven't changed it,
+      # it won't show an error (how obnoxious!)
+      @changed = {}
+      
+      @model?.bind('change', (model) ->
+        jQuery(@el).find('input:enabled').each (index, element) =>
+          @_csvRemoveError(jQuery(element))
+      , @)
+      @model?.bind('error', (model, errors) -> 
+        for key, message of errors when @changed[key]
+          @_csvAddError(jQuery(@el).find("[name='#{keyToAttrName(key, @model._csvModelName)}']"), message)
+      , @)
+      console?.log "model must be provided for ClientSideValidation Backbone Views" unless @model
+    
+    #
+    # Event handlers
+    #
+    TargetView.prototype._csvUpdateInput = (event) ->
+      attr_name = attrNameToKey(event.target)
+      @changed[attr_name] = true if event.type == 'focusout'
+      
+      update = {}
+      update[key] = value for key, value of @model.attributes
+      update[attr_name] = jQuery(event.target).val()
+      
+      @model.set(update)
+    
+    TargetView.prototype._csvUpdateCheckbox = (event) ->
+      console?.log "CHECKBOX COMING SOON"
+      
+    TargetView.prototype._csvUpdateAllInputsAndSubmit = (event) ->
+      update = {}
+      update[key] = value for key, value of @model?.attributes
+
+      jQuery(@el).find('input:enabled').each (index, input) =>
+        attr_name = attrNameToKey(input)
+        @changed[attr_name] = true
+        update[attr_name] = jQuery(input).val()
+
+      # Set and sync to server (submit)
+      @model.save(update, { success: => @trigger('success') })
+      false
+    
+    #
+    #  Helper methods and functions
+    #
+    TargetView.prototype._csvAddError = (element, message) ->
+      settings = window.ClientSideValidations.models[@model._csvModelName]
+      ClientSideValidations.formBuilders[settings.type].add(element, settings, message)
+    TargetView.prototype._csvRemoveError = (element) ->
+      settings = window.ClientSideValidations.models[@model._csvModelName]
+      ClientSideValidations.formBuilders[settings.type].remove(element, settings)
+    
+    attrNameToKey = (element) ->
+      jQuery(element).attr('name')?.match(/\[([^\]]+)\]/)?[1]
+
+    keyToAttrName = (attr_name, scope = "") ->
+      if scope.length
+        "#{scope}[#{attr_name}]"
+      else
+        "#{attr_name}"
+  
 
   callbacks:
     element:

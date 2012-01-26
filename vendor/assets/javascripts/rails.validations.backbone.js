@@ -167,6 +167,7 @@
 
   window.ClientSideValidations = {
     forms: {},
+    models: {},
     validators: {
       all: function() {
         return jQuery.extend({}, ClientSideValidations.validators.local, ClientSideValidations.validators.remote);
@@ -395,6 +396,158 @@
           }
         }
       }
+    },
+    decorateModel: function(TargetModel, modelName) {
+      var originalValidate;
+      TargetModel.prototype._csvModelName = modelName;
+      originalValidate = TargetModel.prototype.validate;
+      return TargetModel.prototype.validate = function(attrs) {
+        var attr, attribute_validators, context, element, errors, fn, kind, message, settings, valid, validators, value, _i, _len, _ref;
+        if (originalValidate) {
+          errors = originalValidate.call(this, attrs);
+          if (errors) return errors;
+        }
+        settings = ClientSideValidations.models[modelName];
+        validators = settings.validators;
+        errors = {};
+        valid = true;
+        for (attr in attrs) {
+          value = attrs[attr];
+          attribute_validators = validators[attr];
+          _ref = [ClientSideValidations.validators.local, ClientSideValidations.validators.remote];
+          for (_i = 0, _len = _ref.length; _i < _len; _i++) {
+            context = _ref[_i];
+            if (!errors.length) {
+              for (kind in context) {
+                fn = context[kind];
+                if (attribute_validators != null ? attribute_validators[kind] : void 0) {
+                  element = {
+                    attr: function(a) {
+                      return {
+                        name: attr
+                      }[a];
+                    },
+                    val: function() {
+                      return value;
+                    }
+                  };
+                  message = fn.call(context, element, attribute_validators[kind]);
+                  if (message) {
+                    valid = false;
+                    errors[attr] = message;
+                  }
+                }
+              }
+            }
+          }
+        }
+        if (!valid) return errors;
+      };
+    },
+    decorateView: function(TargetView) {
+      var attrNameToKey, events, key, keyToAttrName, originalInitialize, value, _ref;
+      events = {
+        'submit': '_csvUpdateAllInputsAndSubmit',
+        'focusout input:enabled:not(:radio)': '_csvUpdateInput',
+        'change input:enabled:not(:radio)': '_csvUpdateInput',
+        'click :checkbox': '_csvUpdateCheckbox'
+      };
+      _ref = TargetView.prototype.events;
+      for (key in _ref) {
+        value = _ref[key];
+        events[key] = value;
+      }
+      TargetView.prototype.events = events;
+      originalInitialize = TargetView.prototype.initialize;
+      TargetView.prototype.initialize = function() {
+        var _ref2, _ref3;
+        if (originalInitialize) originalInitialize.apply(this, arguments);
+        this.changed = {};
+        if ((_ref2 = this.model) != null) {
+          _ref2.bind('change', function(model) {
+            var _this = this;
+            return jQuery(this.el).find('input:enabled').each(function(index, element) {
+              return _this._csvRemoveError(jQuery(element));
+            });
+          }, this);
+        }
+        if ((_ref3 = this.model) != null) {
+          _ref3.bind('error', function(model, errors) {
+            var key, message, _results;
+            _results = [];
+            for (key in errors) {
+              message = errors[key];
+              if (this.changed[key]) {
+                _results.push(this._csvAddError(jQuery(this.el).find("[name='" + (keyToAttrName(key, this.model._csvModelName)) + "']"), message));
+              }
+            }
+            return _results;
+          }, this);
+        }
+        if (!this.model) {
+          return typeof console !== "undefined" && console !== null ? console.log("model must be provided for ClientSideValidation Backbone Views") : void 0;
+        }
+      };
+      TargetView.prototype._csvUpdateInput = function(event) {
+        var attr_name, key, update, value, _ref2;
+        attr_name = attrNameToKey(event.target);
+        if (event.type === 'focusout') this.changed[attr_name] = true;
+        update = {};
+        _ref2 = this.model.attributes;
+        for (key in _ref2) {
+          value = _ref2[key];
+          update[key] = value;
+        }
+        update[attr_name] = jQuery(event.target).val();
+        return this.model.set(update);
+      };
+      TargetView.prototype._csvUpdateCheckbox = function(event) {
+        return typeof console !== "undefined" && console !== null ? console.log("CHECKBOX COMING SOON") : void 0;
+      };
+      TargetView.prototype._csvUpdateAllInputsAndSubmit = function(event) {
+        var key, update, value, _ref2, _ref3,
+          _this = this;
+        update = {};
+        _ref3 = (_ref2 = this.model) != null ? _ref2.attributes : void 0;
+        for (key in _ref3) {
+          value = _ref3[key];
+          update[key] = value;
+        }
+        jQuery(this.el).find('input:enabled').each(function(index, input) {
+          var attr_name;
+          attr_name = attrNameToKey(input);
+          _this.changed[attr_name] = true;
+          return update[attr_name] = jQuery(input).val();
+        });
+        this.model.save(update, {
+          success: function() {
+            return _this.trigger('success');
+          }
+        });
+        return false;
+      };
+      TargetView.prototype._csvAddError = function(element, message) {
+        var settings;
+        settings = window.ClientSideValidations.models[this.model._csvModelName];
+        return ClientSideValidations.formBuilders[settings.type].add(element, settings, message);
+      };
+      TargetView.prototype._csvRemoveError = function(element) {
+        var settings;
+        settings = window.ClientSideValidations.models[this.model._csvModelName];
+        return ClientSideValidations.formBuilders[settings.type].remove(element, settings);
+      };
+      attrNameToKey = function(element) {
+        var _ref2, _ref3;
+        return (_ref2 = jQuery(element).attr('name')) != null ? (_ref3 = _ref2.match(/\[([^\]]+)\]/)) != null ? _ref3[1] : void 0 : void 0;
+      };
+      return keyToAttrName = function(attr_name, scope) {
+        if (scope == null) scope = "";
+        if (scope.length) {
+          return "" + scope + "[" + attr_name + "]";
+        } else {
+          return "" + attr_name;
+        }
+      };
     },
     callbacks: {
       element: {
